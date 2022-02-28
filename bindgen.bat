@@ -1,0 +1,1 @@
+wasm-bindgen --out-dir ./pkg/ --target web .\target\wasm32-unknown-unknown\release\bevy-unfair-advantage.wasm
