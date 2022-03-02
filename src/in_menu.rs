@@ -97,7 +97,6 @@ fn play_button(
                 state.set(AppState::InGame).unwrap();
             },
             Interaction::Hovered => {
-                println!("Hovered a button");
                 *color = UiColor(Color::rgb(0.4, 0.5, 0.6));
             },
             Interaction::None => {

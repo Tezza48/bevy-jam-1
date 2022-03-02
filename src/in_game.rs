@@ -26,17 +26,18 @@ impl Plugin for InGameStatePlugin {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BlockType {
-    Regular,
+    Red,
     Green,
     Blue,
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 enum GridObject {
     Player,
     PushBlock(BlockType),
-    Button(Option<Entity>),
+    Button(BlockType, Option<Entity>),
     Wall,
 }
 
@@ -91,10 +92,29 @@ fn on_enter(
         objects: vec![
             (GridObject::Player, GridPosition { x: 0, y: 0 }),
             (GridObject::Wall, GridPosition { x: 3, y: 3 }),
-            (GridObject::Button(None), GridPosition { x: -1, y: 2 }),
             (
-                GridObject::PushBlock(BlockType::Regular),
-                GridPosition { x: 4, y: 4 },
+                GridObject::Button(BlockType::Red, None),
+                GridPosition { x: -2, y: -2 },
+            ),
+            (
+                GridObject::Button(BlockType::Green, None),
+                GridPosition { x: 0, y: -2 },
+            ),
+            (
+                GridObject::Button(BlockType::Blue, None),
+                GridPosition { x: 2, y: -2 },
+            ),
+            (
+                GridObject::PushBlock(BlockType::Red),
+                GridPosition { x: -2, y: 2 },
+            ),
+            (
+                GridObject::PushBlock(BlockType::Green),
+                GridPosition { x: 0, y: 2 },
+            ),
+            (
+                GridObject::PushBlock(BlockType::Blue),
+                GridPosition { x: 2, y: 2 },
             ),
         ],
     };
@@ -158,7 +178,7 @@ fn player_move_event_listener(
         if let Some((obj, _, other_entity)) = grid_objects.iter().find(|(object, position, _)| {
             position.x == new_player_pos.x
                 && position.y == new_player_pos.y
-                && !matches!(object, GridObject::Button(_)) //
+                && !matches!(object, GridObject::Button(_, _))
         }) {
             match obj {
                 GridObject::Player => return,
@@ -172,7 +192,7 @@ fn player_move_event_listener(
                         let is_overlapped = position.x == new_block_position.x
                             && position.y == new_block_position.y;
 
-                        let is_button = matches!(object, GridObject::Button(_));
+                        let is_button = matches!(object, GridObject::Button(_, _));
 
                         if is_button {
                             return false;
@@ -200,7 +220,7 @@ fn player_move_event_listener(
 
                     return;
                 }
-                GridObject::Button(_) => {
+                GridObject::Button(_, _) => {
                     let (_, mut position, _) = grid_objects
                         .get_mut(player_entity)
                         .expect("Player entity not found");
@@ -225,8 +245,15 @@ fn block_move_event_listener(
     mut query: Query<(&GridPosition, &mut GridObject, Entity)>,
 ) {
     for BlockMoveEvent { block, position } in move_events.iter() {
+        let block_object = query.get_component::<GridObject>(*block).unwrap();
+        let block_type = if let GridObject::PushBlock(kind) = block_object {
+            *kind
+        } else {
+            continue;
+        };
+
         query.iter_mut().for_each(|(pos, mut object, button)| {
-            if let GridObject::Button(pressing_entity) = object.deref_mut() {
+            if let GridObject::Button(button_type, pressing_entity) = object.deref_mut() {
                 // This is a button, we care about this one
                 // the moved block is already on the button so we know it's being removed
                 if let Some(_) = pressing_entity.take() {
@@ -238,6 +265,16 @@ fn block_move_event_listener(
                 if pos.x != position.0 || pos.y != position.1 {
                     return;
                 }
+
+                if block_type != *button_type {
+                    println!("types didn't match");
+                    return;
+                }
+
+                println!(
+                    "Pushed block type {:?}, required type: {:?}",
+                    &block_type, &button_type
+                );
 
                 *pressing_entity = Some(*block);
 
@@ -276,10 +313,7 @@ fn update_player_keyboard(
     writer.send(move_dir);
 }
 
-fn apply_grid_entity_position(
-    mut query: Query<(&GridPosition, &mut Transform)>,
-    grid: Res<Grid>,
-) {
+fn apply_grid_entity_position(mut query: Query<(&GridPosition, &mut Transform)>, grid: Res<Grid>) {
     for (position, mut transform) in query.iter_mut() {
         transform.translation.x = position.x as f32 * grid.cell_size;
         transform.translation.y = position.y as f32 * grid.cell_size;
@@ -309,7 +343,7 @@ impl LevelData {
                         .insert(GridObject::Player)
                         .insert(*position);
                 }
-                GridObject::PushBlock(_) => {
+                GridObject::PushBlock(kind) => {
                     commands
                         .spawn_bundle(SpriteBundle {
                             texture: asset_server.load("sprites/box.png"),
@@ -321,20 +355,42 @@ impl LevelData {
                             ..Default::default()
                         })
                         .insert(Cleanup)
-                        .insert(GridObject::PushBlock(BlockType::Regular))
-                        .insert(*position);
+                        .insert(GridObject::PushBlock(*kind))
+                        .insert(*position)
+                        .with_children(|parent| {
+                            parent.spawn_bundle(SpriteBundle {
+                                texture: asset_server.load("sprites/color_label.png"),
+                                sprite: Sprite {
+                                    custom_size: Some(Vec2::splat(32.0)),
+                                    color: match kind {
+                                        BlockType::Red => Color::ORANGE_RED,
+                                        BlockType::Green => Color::SEA_GREEN,
+                                        BlockType::Blue => Color::ALICE_BLUE,
+                                    },
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            });
+                        });
                 }
-                GridObject::Button(_) => {
+                GridObject::Button(kind, _) => {
                     commands
                         .spawn_bundle(ColorMesh2dBundle {
                             mesh: meshes.add(shape::Quad::default().into()).into(),
-                            material: materials.add(Color::RED.into()),
+                            material: materials.add(
+                                match kind {
+                                    BlockType::Red => Color::ORANGE_RED,
+                                    BlockType::Green => Color::SEA_GREEN,
+                                    BlockType::Blue => Color::ALICE_BLUE,
+                                }
+                                .into(),
+                            ),
                             transform: Transform::from_scale(Vec3::splat(64.0))
                                 .with_translation(Vec3::new(0.0, 0.0, 5.0)),
                             ..Default::default()
                         })
                         .insert(Cleanup)
-                        .insert(GridObject::Button(None))
+                        .insert(GridObject::Button(*kind, None))
                         .insert(*position);
                 }
                 GridObject::Wall => {
