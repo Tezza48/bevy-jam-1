@@ -1,16 +1,39 @@
 use std::ops::DerefMut;
 
-use bevy::{prelude::*};
-use bevy_inspector_egui::Inspectable;
+use bevy::prelude::*;
+use bevy_inspector_egui::{Inspectable, RegisterInspectable};
 
-pub enum BlockType {
+use crate::app_state::*;
+
+pub struct InGameStatePlugin;
+impl Plugin for InGameStatePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Grid>()
+            .register_inspectable::<Grid>()
+            .register_inspectable::<GridPosition>()
+            .add_event::<PlayerMoveEvent>()
+            .add_event::<BlockMoveEvent>()
+            .add_event::<ButtonStateChangeEvent>()
+            .add_system_set(SystemSet::on_enter(AppState::InGame).with_system(on_enter))
+            .add_system_set(
+                SystemSet::on_update(AppState::InGame)
+                    .with_system(update_player_keyboard)
+                    .with_system(player_move_event_listener)
+                    .with_system(apply_grid_entity_position)
+                    .with_system(block_move_event_listener),
+            )
+            .add_system_set(SystemSet::on_exit(AppState::InGame).with_system(on_exit));
+    }
+}
+
+enum BlockType {
     Regular,
     Green,
     Blue,
 }
 
 #[derive(Component)]
-pub enum GridObject {
+enum GridObject {
     Player,
     PushBlock(BlockType),
     Button(Option<Entity>),
@@ -18,12 +41,12 @@ pub enum GridObject {
 }
 
 #[derive(Inspectable)]
-pub struct Grid {
+struct Grid {
     cell_size: f32,
 }
 
 #[derive(Component)]
-pub struct Cleanup;
+struct Cleanup;
 
 struct Level {
     pressed_button_count: u32,
@@ -34,16 +57,15 @@ struct LevelData {
     objects: Vec<(GridObject, GridPosition)>,
 }
 
-pub struct PlayerMoveEvent(i32, i32);
+struct PlayerMoveEvent(i32, i32);
 
-pub struct BlockMoveEvent {
+struct BlockMoveEvent {
     pub block: Entity,
     pub position: (i32, i32),
 }
 
-
 #[derive(Component, Inspectable, Clone, Copy)]
-pub struct GridPosition {
+struct GridPosition {
     pub x: i32,
     pub y: i32,
 }
@@ -54,13 +76,12 @@ impl Default for Grid {
     }
 }
 
-
-pub enum ButtonStateChangeEvent {
+enum ButtonStateChangeEvent {
     Pressed(Entity),
     Unpressed(Entity),
 }
 
-pub fn on_enter(
+fn on_enter(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
@@ -71,7 +92,10 @@ pub fn on_enter(
             (GridObject::Player, GridPosition { x: 0, y: 0 }),
             (GridObject::Wall, GridPosition { x: 3, y: 3 }),
             (GridObject::Button(None), GridPosition { x: -1, y: 2 }),
-            (GridObject::PushBlock(BlockType::Regular), GridPosition { x: 4, y: 4 }),
+            (
+                GridObject::PushBlock(BlockType::Regular),
+                GridPosition { x: 4, y: 4 },
+            ),
         ],
     };
 
@@ -107,16 +131,13 @@ pub fn on_enter(
         });
 }
 
-pub fn on_exit(
-    mut commands: Commands,
-    query: Query<Entity, With<Cleanup>>,
-) {
+fn on_exit(mut commands: Commands, query: Query<Entity, With<Cleanup>>) {
     for e in query.iter() {
         commands.entity(e).despawn_recursive();
     }
 }
 
-pub fn player_move_event_listener(
+fn player_move_event_listener(
     mut listener: EventReader<PlayerMoveEvent>,
     mut grid_objects: Query<(&GridObject, &mut GridPosition, Entity)>,
     mut block_move_events: EventWriter<BlockMoveEvent>,
@@ -198,7 +219,7 @@ pub fn player_move_event_listener(
     }
 }
 
-pub fn block_move_event_listener(
+fn block_move_event_listener(
     mut move_events: EventReader<BlockMoveEvent>,
     mut button_state_change_event: EventWriter<ButtonStateChangeEvent>,
     mut query: Query<(&GridPosition, &mut GridObject, Entity)>,
@@ -231,7 +252,7 @@ pub fn block_move_event_listener(
     }
 }
 
-pub fn update_player_keyboard(
+fn update_player_keyboard(
     keyboard_input: Res<Input<KeyCode>>,
     mut writer: EventWriter<PlayerMoveEvent>,
 ) {
@@ -255,7 +276,10 @@ pub fn update_player_keyboard(
     writer.send(move_dir);
 }
 
-pub fn apply_grid_entity_position(mut query: Query<(&GridPosition, &mut Transform)>, grid: Res<Grid>) {
+fn apply_grid_entity_position(
+    mut query: Query<(&GridPosition, &mut Transform)>,
+    grid: Res<Grid>,
+) {
     for (position, mut transform) in query.iter_mut() {
         transform.translation.x = position.x as f32 * grid.cell_size;
         transform.translation.y = position.y as f32 * grid.cell_size;
