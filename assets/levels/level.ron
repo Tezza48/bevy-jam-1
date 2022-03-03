@@ -1,0 +1,39 @@
+(
+    objects: [
+        (Player, (x: 0, y: 0)),
+        (Wall, (x: 3, y: 3)),
+        (
+            Button(Red, None),
+            (x: -2, y: -2),
+        ),
+        (
+            Button(Green, None),
+            (x: 0, y: -2),
+        ),
+        (
+            Button(Blue, None),
+            (x: 2, y: -2),
+        ),
+        (
+            PushBlock(
+                kind: Red,
+                pushes_left: 3,
+            ),
+            (x: -2, y: 2),
+        ),
+        (
+            PushBlock(
+                kind: Green,
+                pushes_left: 3,
+            ),
+            (x: 0, y: 2),
+        ),
+        (
+            PushBlock(
+                kind: Blue,
+                pushes_left: 3,
+            ),
+            (x: 2, y: 2),
+        ),
+    ],
+)

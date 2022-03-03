@@ -1,7 +1,10 @@
-use std::borrow::BorrowMut;
+mod game_ui;
+
+
 
 use bevy::prelude::*;
 use bevy_inspector_egui::{Inspectable, RegisterInspectable};
+use serde::{Serialize, Deserialize};
 
 use crate::app_state::*;
 
@@ -9,11 +12,13 @@ pub struct InGameStatePlugin;
 impl Plugin for InGameStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Grid>()
+            .add_plugin(game_ui::GameUiPlugin)
             .register_inspectable::<Grid>()
             .register_inspectable::<GridPosition>()
             .add_event::<PlayerMoveEvent>()
             .add_event::<BlockMoveEvent>()
             .add_event::<ButtonStateChangeEvent>()
+            .add_event::<LevelInitialized>()
             .add_system_set(SystemSet::on_enter(AppState::InGame).with_system(on_enter))
             .add_system_set(
                 SystemSet::on_update(AppState::InGame)
@@ -27,14 +32,14 @@ impl Plugin for InGameStatePlugin {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 enum BlockType {
     Red,
     Green,
     Blue,
 }
 
-#[derive(Component, Debug)]
+#[derive(Component, Debug, Serialize)]
 enum GridObject {
     Player,
     PushBlock { kind: BlockType, pushes_left: u32 },
@@ -51,10 +56,13 @@ struct Grid {
 struct Cleanup;
 
 struct Level {
-    pressed_button_count: u32,
-    total_button_count: u32,
+    pub pressed_button_count: u32,
+    pub total_button_count: u32,
 }
 
+struct LevelInitialized;
+
+#[derive(Serialize)]
 struct LevelData {
     objects: Vec<(GridObject, GridPosition)>,
 }
@@ -66,7 +74,7 @@ struct BlockMoveEvent {
     pub position: (i32, i32),
 }
 
-#[derive(Component, Inspectable, Clone, Copy)]
+#[derive(Component, Inspectable, Clone, Copy, Serialize)]
 struct GridPosition {
     pub x: i32,
     pub y: i32,
@@ -88,6 +96,7 @@ fn on_enter(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     asset_server: Res<AssetServer>,
+    mut level_initialized_event: EventWriter<LevelInitialized>,
 ) {
     let level_data = LevelData {
         objects: vec![
@@ -129,7 +138,15 @@ fn on_enter(
         ],
     };
 
+    let as_ron = ron::to_string(&level_data).unwrap();
+    println!("{}", as_ron);
+
     level_data.spawn(&mut commands, &mut meshes, &mut materials, &asset_server);
+
+    commands.insert_resource(Level {
+        pressed_button_count: 0,
+        total_button_count: 3,
+    });
 
     commands
         .spawn()
@@ -159,6 +176,8 @@ fn on_enter(
                 }
             }
         });
+
+    level_initialized_event.send(LevelInitialized);
 }
 
 fn on_exit(mut commands: Commands, query: Query<Entity, With<Cleanup>>) {
@@ -252,17 +271,38 @@ fn player_move_event_listener(
 fn decrease_pushes_remaining(
     mut block_move_events: EventReader<BlockMoveEvent>,
     mut query: Query<&mut GridObject>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>
 ) {
     for BlockMoveEvent { block, .. } in block_move_events.iter() {
         if let Ok(mut grid_object) = query.get_mut(*block) {
             if let GridObject::PushBlock {
                 pushes_left: pushes_remaining,
-                ..
+                kind
             } = grid_object.as_mut()
             {
                 if *pushes_remaining == 0 { continue; }
                 *pushes_remaining -= 1;
                 println!("Pushes left {}", pushes_remaining);
+
+                if *pushes_remaining == 0 {
+                    commands.entity(*block)
+                        .with_children(|parent| {
+                            parent.spawn_bundle(SpriteBundle {
+                                texture: asset_server.load("sprites/color_label.png"),
+                                sprite: Sprite {
+                                    custom_size: Some(Vec2::splat(32.0)),
+                                    color: match *kind {
+                                        BlockType::Red => Color::ORANGE_RED,
+                                        BlockType::Green => Color::SEA_GREEN,
+                                        BlockType::Blue => Color::ALICE_BLUE,
+                                    },
+                                    ..Default::default()
+                                },
+                                ..Default::default()
+                            });
+                        });
+                }
             }
         }
     }
@@ -274,25 +314,6 @@ fn block_move_event_listener(
     mut query: Query<(&GridPosition, &mut GridObject, Entity)>,
 ) {
     for BlockMoveEvent { block, position } in move_events.iter() {
-        // if let GridObject::PushBlock {
-        //     mut pushes_left, ..
-        // } = (&mut query.get_mut::<GridObject>(*block).unwrap()).as_mut()
-        // {
-        //     pushes_left -= 1;
-        //     println!("Pushes left {}", pushes_left);
-        // }
-
-        // if let Ok((_, mut grid_object, _)) = query.get_mut(*block) {
-
-        // }
-        // let block_mut = (&query.get_component_mut::<GridObject>(*block).unwrap()).as_mut();
-        // match block_mut {
-        //     GridObject::Player => todo!(),
-        //     GridObject::PushBlock { kind, pushes_left } => todo!(),
-        //     GridObject::Button(_, _) => todo!(),
-        //     GridObject::Wall => todo!(),
-        // }
-
         let block_object = query.get_component_mut::<GridObject>(*block).unwrap();
         let (block_kind, is_block_discovered) =
             if let GridObject::PushBlock { kind, pushes_left } = block_object.as_ref() {
@@ -415,19 +436,19 @@ impl LevelData {
                         })
                         .insert(*position)
                         .with_children(|parent| {
-                            parent.spawn_bundle(SpriteBundle {
-                                texture: asset_server.load("sprites/color_label.png"),
-                                sprite: Sprite {
-                                    custom_size: Some(Vec2::splat(32.0)),
-                                    color: match kind {
-                                        BlockType::Red => Color::ORANGE_RED,
-                                        BlockType::Green => Color::SEA_GREEN,
-                                        BlockType::Blue => Color::ALICE_BLUE,
-                                    },
-                                    ..Default::default()
-                                },
-                                ..Default::default()
-                            });
+                            // parent.spawn_bundle(SpriteBundle {
+                            //     texture: asset_server.load("sprites/color_label.png"),
+                            //     sprite: Sprite {
+                            //         custom_size: Some(Vec2::splat(32.0)),
+                            //         color: match kind {
+                            //             BlockType::Red => Color::ORANGE_RED,
+                            //             BlockType::Green => Color::SEA_GREEN,
+                            //             BlockType::Blue => Color::ALICE_BLUE,
+                            //         },
+                            //         ..Default::default()
+                            //     },
+                            //     ..Default::default()
+                            // });
                         });
                 }
                 GridObject::Button(kind, _) => {
