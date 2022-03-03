@@ -1,4 +1,4 @@
-use std::ops::DerefMut;
+use std::borrow::BorrowMut;
 
 use bevy::prelude::*;
 use bevy_inspector_egui::{Inspectable, RegisterInspectable};
@@ -20,7 +20,8 @@ impl Plugin for InGameStatePlugin {
                     .with_system(update_player_keyboard)
                     .with_system(player_move_event_listener)
                     .with_system(apply_grid_entity_position)
-                    .with_system(block_move_event_listener),
+                    .with_system(block_move_event_listener)
+                    .with_system(decrease_pushes_remaining),
             )
             .add_system_set(SystemSet::on_exit(AppState::InGame).with_system(on_exit));
     }
@@ -36,7 +37,7 @@ enum BlockType {
 #[derive(Component, Debug)]
 enum GridObject {
     Player,
-    PushBlock(BlockType),
+    PushBlock { kind: BlockType, pushes_left: u32 },
     Button(BlockType, Option<Entity>),
     Wall,
 }
@@ -105,15 +106,24 @@ fn on_enter(
                 GridPosition { x: 2, y: -2 },
             ),
             (
-                GridObject::PushBlock(BlockType::Red),
+                GridObject::PushBlock {
+                    kind: BlockType::Red,
+                    pushes_left: 3,
+                },
                 GridPosition { x: -2, y: 2 },
             ),
             (
-                GridObject::PushBlock(BlockType::Green),
+                GridObject::PushBlock {
+                    kind: BlockType::Green,
+                    pushes_left: 3,
+                },
                 GridPosition { x: 0, y: 2 },
             ),
             (
-                GridObject::PushBlock(BlockType::Blue),
+                GridObject::PushBlock {
+                    kind: BlockType::Blue,
+                    pushes_left: 3,
+                },
                 GridPosition { x: 2, y: 2 },
             ),
         ],
@@ -182,7 +192,7 @@ fn player_move_event_listener(
         }) {
             match obj {
                 GridObject::Player => return,
-                GridObject::PushBlock(_) => {
+                GridObject::PushBlock { .. } => {
                     let new_block_position = GridPosition {
                         x: new_player_pos.x + move_dir.0,
                         y: new_player_pos.y + move_dir.1,
@@ -239,21 +249,60 @@ fn player_move_event_listener(
     }
 }
 
+fn decrease_pushes_remaining(
+    mut block_move_events: EventReader<BlockMoveEvent>,
+    mut query: Query<&mut GridObject>,
+) {
+    for BlockMoveEvent { block, .. } in block_move_events.iter() {
+        if let Ok(mut grid_object) = query.get_mut(*block) {
+            if let GridObject::PushBlock {
+                pushes_left: pushes_remaining,
+                ..
+            } = grid_object.as_mut()
+            {
+                if *pushes_remaining == 0 { continue; }
+                *pushes_remaining -= 1;
+                println!("Pushes left {}", pushes_remaining);
+            }
+        }
+    }
+}
+
 fn block_move_event_listener(
     mut move_events: EventReader<BlockMoveEvent>,
     mut button_state_change_event: EventWriter<ButtonStateChangeEvent>,
     mut query: Query<(&GridPosition, &mut GridObject, Entity)>,
 ) {
     for BlockMoveEvent { block, position } in move_events.iter() {
-        let block_object = query.get_component::<GridObject>(*block).unwrap();
-        let block_type = if let GridObject::PushBlock(kind) = block_object {
-            *kind
-        } else {
-            continue;
-        };
+        // if let GridObject::PushBlock {
+        //     mut pushes_left, ..
+        // } = (&mut query.get_mut::<GridObject>(*block).unwrap()).as_mut()
+        // {
+        //     pushes_left -= 1;
+        //     println!("Pushes left {}", pushes_left);
+        // }
+
+        // if let Ok((_, mut grid_object, _)) = query.get_mut(*block) {
+
+        // }
+        // let block_mut = (&query.get_component_mut::<GridObject>(*block).unwrap()).as_mut();
+        // match block_mut {
+        //     GridObject::Player => todo!(),
+        //     GridObject::PushBlock { kind, pushes_left } => todo!(),
+        //     GridObject::Button(_, _) => todo!(),
+        //     GridObject::Wall => todo!(),
+        // }
+
+        let block_object = query.get_component_mut::<GridObject>(*block).unwrap();
+        let (block_kind, is_block_discovered) =
+            if let GridObject::PushBlock { kind, pushes_left } = block_object.as_ref() {
+                (*kind, *pushes_left == 0)
+            } else {
+                continue;
+            };
 
         query.iter_mut().for_each(|(pos, mut object, button)| {
-            if let GridObject::Button(button_type, pressing_entity) = object.deref_mut() {
+            if let GridObject::Button(button_kind, pressing_entity) = object.as_mut() {
                 // This is a button, we care about this one
                 // the moved block is already on the button so we know it's being removed
                 if let Some(_) = pressing_entity.take() {
@@ -266,14 +315,19 @@ fn block_move_event_listener(
                     return;
                 }
 
-                if block_type != *button_type {
+                if block_kind != *button_kind {
                     println!("types didn't match");
+                    return;
+                }
+
+                if !is_block_discovered {
+                    println!("Block is not discovered");
                     return;
                 }
 
                 println!(
                     "Pushed block type {:?}, required type: {:?}",
-                    &block_type, &button_type
+                    &block_kind, &button_kind
                 );
 
                 *pressing_entity = Some(*block);
@@ -343,7 +397,7 @@ impl LevelData {
                         .insert(GridObject::Player)
                         .insert(*position);
                 }
-                GridObject::PushBlock(kind) => {
+                GridObject::PushBlock { kind, pushes_left } => {
                     commands
                         .spawn_bundle(SpriteBundle {
                             texture: asset_server.load("sprites/box.png"),
@@ -355,7 +409,10 @@ impl LevelData {
                             ..Default::default()
                         })
                         .insert(Cleanup)
-                        .insert(GridObject::PushBlock(*kind))
+                        .insert(GridObject::PushBlock {
+                            kind: *kind,
+                            pushes_left: *pushes_left,
+                        })
                         .insert(*position)
                         .with_children(|parent| {
                             parent.spawn_bundle(SpriteBundle {
