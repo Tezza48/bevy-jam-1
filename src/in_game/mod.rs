@@ -313,7 +313,7 @@ fn block_move_event_listener(
     mut button_state_change_event: EventWriter<ButtonStateChangeEvent>,
     mut query: Query<(&GridPosition, &mut GridObject, Entity)>,
 ) {
-    for BlockMoveEvent { block, position } in move_events.iter() {
+    for BlockMoveEvent { block, position: moved_block_position } in move_events.iter() {
         let block_object = query.get_component_mut::<GridObject>(*block).unwrap();
         let (block_kind, is_block_discovered) =
             if let GridObject::PushBlock { kind, pushes_left } = block_object.as_ref() {
@@ -322,17 +322,22 @@ fn block_move_event_listener(
                 continue;
             };
 
-        query.iter_mut().for_each(|(pos, mut object, button)| {
-            if let GridObject::Button(button_kind, pressing_entity) = object.as_mut() {
+        query.iter_mut().for_each(|(pos, mut object, entity)| {
+            if let GridObject::Button(button_kind, pressing_entity_option) = object.as_mut() {
+                let button_pos = pos;
+                let button_entity = entity;
+                
                 // This is a button, we care about this one
                 // the moved block is already on the button so we know it's being removed
-                if let Some(_) = pressing_entity.take() {
-                    // TODO WT: Events for buttons being pressed and unpressed (to change the state of the button sprite).
-                    println!("Block moved off of button");
-                    button_state_change_event.send(ButtonStateChangeEvent::Unpressed(button));
+                if let Some(current_block) = pressing_entity_option.take() {
+                    if current_block == *block {
+                        // TODO WT: Events for buttons being pressed and unpressed (to change the state of the button sprite).
+                        println!("Block moved off of button");
+                        button_state_change_event.send(ButtonStateChangeEvent::Unpressed(button_entity));
+                    }
                 }
 
-                if pos.x != position.0 || pos.y != position.1 {
+                if button_pos.x != moved_block_position.0 || button_pos.y != moved_block_position.1 {
                     return;
                 }
 
@@ -351,10 +356,10 @@ fn block_move_event_listener(
                     &block_kind, &button_kind
                 );
 
-                *pressing_entity = Some(*block);
+                *pressing_entity_option = Some(*block);
 
                 println!("Block moved onto button");
-                button_state_change_event.send(ButtonStateChangeEvent::Pressed(button));
+                button_state_change_event.send(ButtonStateChangeEvent::Pressed(entity));
             } else {
                 return;
             }

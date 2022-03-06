@@ -86,13 +86,17 @@ fn update_ui(
     for button_state in button_state_change_event.iter() {
         match button_state {
             ButtonStateChangeEvent::Pressed(_) => {
+                println!("Pressed");
                 level.pressed_button_count += 1;
             },
             ButtonStateChangeEvent::Unpressed(_) => {
+                println!("Unpressed (before check)");
                 if level.pressed_button_count == 0 {
+                    println!("\t count already 0");
                     continue;
                 }
 
+                println!("Decreasing count");
                 level.pressed_button_count = level.total_button_count.min(level.pressed_button_count - 1);
             },
         }
